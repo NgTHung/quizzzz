@@ -41,6 +41,61 @@ npm run db:studio    # Open Drizzle Studio (DB GUI)
 - All server-only code (DB access, etc.) goes under `src/lib/server/` — SvelteKit enforces this boundary
 - Svelte runes mode is on by default for the whole project (`$props()`, `$state()`, `$derived()`, etc.)
 - Global styles imported in `src/routes/+layout.svelte` via `layout.css`
+- UI language is Vietnamese
+
+### App structure
+
+```
+src/
+  lib/
+    quiz.ts                  # Question types, shuffle/select helpers, buildActiveQuestion
+    server/
+      db/
+        schema.ts            # `questions` table (id, question, ans1-4, correctAnsIndex, reason)
+        index.ts             # Drizzle `db` client (postgres.js)
+  routes/
+    +page.server.ts          # Loads all questions ordered by id
+    +page.svelte             # Main quiz app (home / quiz / result / bank phases)
+    admin/
+      +page.server.ts        # Auth, load, and form actions (login/logout/update/delete/upload)
+      +page.svelte           # Admin UI (login, upload, paginated table, inline edit)
+```
+
+### Quiz app phases (`src/routes/+page.svelte`)
+
+- `home` — mode selection, progress bar, saved-session resume
+- `quiz` — question + shuffled answers, two-phase reveal (300 ms neutral → green/red + explanation)
+- `result` — score, session summary list, retry-wrong and custom-select buttons
+- `bank` — full question list with live search and multi-select for custom sessions
+
+### Quiz modes
+
+| Mode | Source | Seen tracking | Session persist |
+|---|---|---|---|
+| `quick` | 50 random (weighted unseen-first) | no | no |
+| `structured` | all unseen in ID order | yes | yes (localStorage) |
+| `review` | all seen in ID order | no | no |
+| `custom` | user-selected from bank or wrong answers | no | no |
+
+### Quiz utilities (`src/lib/quiz.ts`)
+
+- `selectSessionQuestions(all, seenIds, count)` — weighted random, unseen-first, pads with seen
+- `selectNextQuestions(all, seenIds, count)` — ascending ID order, unseen first (structured mode)
+- `selectOldQuestions(all, seenIds, count)` — ascending ID order, seen only (review mode)
+- `buildActiveQuestion(q)` — shuffles answers into `AnswerSlot[]`, tracks `correctSlotIndex`
+
+### Admin portal (`/admin`)
+
+- Hidden URL, password set via `ADMIN_PASSWORD` env var
+- Auth: SHA-256 hashed cookie (`admin_auth`), httpOnly, sameSite strict, 7-day expiry
+- XLSX upload: column-index parsing (A=question, B=ans1, C=ans2, D=ans3, E=ans4, F=correctIndex, G=reason), first row skipped as header
+- Table: 50 rows per page, client-side search, inline edit with `use:enhance`
+- Supports 2-, 3-, and 4-answer questions (ans3 and ans4 are nullable)
+
+### LocalStorage keys
+
+- `quizer_seen_ids` — JSON array of seen question IDs (structured mode progress)
+- `quizer_session` — JSON `{questionIds, currentIndex, score}` for structured session resume
 
 ---
 
