@@ -82,6 +82,41 @@
 	let bankSearch = $state('');
 	let selectedIds = $state(new Set<number>());
 
+	// ── Timer (quick mode only) ───────────────────────────────────────────────
+
+	const QUICK_DURATION = 60 * 60; // 1 hour in seconds
+	let timeLeft = $state(0);
+	let timerInterval: ReturnType<typeof setInterval> | null = null;
+
+	function startTimer() {
+		stopTimer();
+		timeLeft = QUICK_DURATION;
+		timerInterval = setInterval(() => {
+			timeLeft -= 1;
+			if (timeLeft <= 0) {
+				stopTimer();
+				timeUsed = QUICK_DURATION;
+				phase = 'result';
+			}
+		}, 1000);
+	}
+
+	function stopTimer() {
+		if (timerInterval) {
+			clearInterval(timerInterval);
+			timerInterval = null;
+		}
+	}
+
+	function formatTime(s: number): string {
+		const m = Math.floor(s / 60).toString().padStart(2, '0');
+		const sec = (s % 60).toString().padStart(2, '0');
+		return `${m}:${sec}`;
+	}
+
+	let timerUrgent = $derived(timeLeft <= 60 && timeLeft > 0);
+	let timeUsed = $state(0); // seconds used, recorded when session ends
+
 	if (browser) {
 		seenCount = loadSeenIds().size;
 		savedSession = loadSavedSession();
@@ -102,6 +137,7 @@
 	);
 	let selectedCount = $derived(selectedIds.size);
 	let wrongResults = $derived(sessionResults.filter((r) => !r.correct));
+	let resultsByQuestionId = $derived(new Map(sessionResults.map((r) => [r.question.id, r])));
 
 	// ── Answer styling ────────────────────────────────────────────────────────────
 
@@ -141,6 +177,7 @@
 		const seen = loadSeenIds();
 		const picked = selectSessionQuestions(data.questions, seen, 50);
 		beginQuiz(picked, 0, 0);
+		startTimer();
 	}
 
 	function startStructured(fresh = false) {
@@ -237,6 +274,8 @@
 		];
 
 		if (isLastQuestion) {
+			timeUsed = QUICK_DURATION - timeLeft;
+			stopTimer();
 			if (mode === 'structured') {
 				const seen = loadSeenIds();
 				for (const q of shuffled) seen.add(q.id);
@@ -258,6 +297,7 @@
 
 	function goHome() {
 		if (revealTimer) clearTimeout(revealTimer);
+		stopTimer();
 		seenCount = loadSeenIds().size;
 		savedSession = loadSavedSession();
 		phase = 'home';
@@ -274,6 +314,7 @@
 </script>
 
 <main class="min-h-screen bg-zinc-50 flex flex-col items-center px-4 py-10 {phase === 'quiz' ? 'justify-start' : 'justify-center'}">
+
 	{#if data.questions.length === 0}
 		<!-- ── Trống ────────────────────────────────────────────────────────────── -->
 		<div class="bg-white rounded-2xl border border-zinc-100 shadow-sm p-8 w-full max-w-lg text-center">
@@ -431,7 +472,14 @@
 			<div class="flex flex-col gap-2">
 				<div class="flex justify-between text-sm text-zinc-400">
 					<button onclick={goHome} class="hover:text-zinc-600 transition-colors">← Trang chủ</button>
-					<span>{score} đúng</span>
+					<div class="flex items-center gap-3">
+						{#if mode === 'quick'}
+							<span class="font-mono font-medium {timerUrgent ? 'text-red-500' : 'text-zinc-400'}">
+								{formatTime(timeLeft)}
+							</span>
+						{/if}
+						<span>{score} đúng</span>
+					</div>
 				</div>
 				<div class="flex justify-center text-xs text-zinc-400">
 					<span>Câu {currentIndex + 1} / {total}</span>
@@ -500,6 +548,10 @@
 					{/if}
 				</p>
 
+				{#if mode === 'quick' && timeUsed > 0}
+					<p class="text-sm text-zinc-400">Thời gian: {formatTime(timeUsed)}</p>
+				{/if}
+
 				{#if mode === 'structured'}
 					<div class="w-full flex flex-col gap-1.5 mt-1">
 						<div class="flex justify-between text-xs text-zinc-400">
@@ -516,12 +568,18 @@
 				{/if}
 
 				<div class="w-full flex flex-col gap-2 mt-2">
+					<button
+						class="w-full py-3 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-700 transition-colors"
+						onclick={() => startCustom([...shuffled])}
+					>
+						Luyện tập lại {shuffled.length} câu →
+					</button>
 					{#if wrongResults.length > 0}
 						<button
-							class="w-full py-3 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-700 transition-colors"
+							class="w-full py-3 rounded-xl border border-zinc-200 text-zinc-600 text-sm font-medium hover:border-zinc-400 hover:text-zinc-900 transition-colors"
 							onclick={retryWrong}
 						>
-							Luyện tập lại {wrongResults.length} câu sai →
+							Chỉ {wrongResults.length} câu sai →
 						</button>
 						<button
 							class="w-full py-3 rounded-xl border border-zinc-200 text-zinc-600 text-sm font-medium hover:border-zinc-400 hover:text-zinc-900 transition-colors"
@@ -532,7 +590,7 @@
 					{/if}
 					{#if mode === 'structured'}
 						<button
-							class="w-full py-3 rounded-xl {wrongResults.length > 0 ? 'border border-zinc-200 text-zinc-600 hover:border-zinc-400 hover:text-zinc-900' : 'bg-zinc-900 text-white hover:bg-zinc-700'} text-sm font-medium transition-colors"
+							class="w-full py-3 rounded-xl border border-zinc-200 text-zinc-600 text-sm font-medium hover:border-zinc-400 hover:text-zinc-900 transition-colors"
 							onclick={() => startStructured(true)}
 						>
 							Phiên tiếp theo →
@@ -548,38 +606,40 @@
 			</div>
 
 			<!-- Summary list -->
-			{#if sessionResults.length > 0}
+			{#if shuffled.length > 0}
 				<div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden">
 					<p class="px-5 py-4 text-sm font-semibold text-zinc-500 uppercase tracking-wide border-b border-zinc-100">
-						Tổng kết phiên
+						Tổng kết phiên ({shuffled.length} câu)
 					</p>
 					<ul class="divide-y divide-zinc-100">
-						{#each sessionResults as result, i}
+						{#each shuffled as q, i}
+							{@const result = resultsByQuestionId.get(q.id)}
+							{@const icon = result ? (result.correct ? '✓' : '✗') : '–'}
+							{@const iconClass = result ? (result.correct ? 'text-emerald-500' : 'text-red-400') : 'text-zinc-300'}
 							<li>
 								<button
 									class="w-full text-left px-5 py-3 flex items-start gap-3 hover:bg-zinc-50 transition-colors"
 									onclick={() => (expandedResultIndex = expandedResultIndex === i ? null : i)}
 								>
-									<span class="mt-0.5 shrink-0 text-sm font-bold {result.correct ? 'text-emerald-500' : 'text-red-400'}">
-										{result.correct ? '✓' : '✗'}
-									</span>
-									<span class="text-sm text-zinc-700 leading-snug">{trunc(result.question.question)}</span>
+									<span class="mt-0.5 shrink-0 text-sm font-bold {iconClass}">{icon}</span>
+									<span class="text-sm text-zinc-700 leading-snug">{trunc(q.question)}</span>
 								</button>
 
 								{#if expandedResultIndex === i}
 									<div transition:fade={{ duration: 150 }} class="px-5 pb-4 flex flex-col gap-2">
 										<p class="text-xs text-zinc-400 font-medium uppercase tracking-wide">Đáp án đúng</p>
 										<p class="text-sm text-emerald-700 font-medium">
-											{getAnswerLabel(result.question, result.correctIndex)}
+											{getAnswerLabel(q, q.correctAnsIndex)}
 										</p>
-										{#if !result.correct && result.chosenIndex !== null}
+										{#if result && !result.correct && result.chosenIndex !== null}
 											<p class="text-xs text-zinc-400 font-medium uppercase tracking-wide mt-1">Bạn chọn</p>
-											<p class="text-sm text-red-600">
-												{getAnswerLabel(result.question, result.chosenIndex)}
-											</p>
+											<p class="text-sm text-red-600">{getAnswerLabel(q, result.chosenIndex)}</p>
+										{/if}
+										{#if !result}
+											<p class="text-xs text-zinc-300 font-medium uppercase tracking-wide mt-1">Chưa trả lời</p>
 										{/if}
 										<p class="text-xs text-zinc-400 font-medium uppercase tracking-wide mt-1">Giải thích</p>
-										<p class="text-sm text-zinc-600 leading-relaxed">{result.question.reason}</p>
+										<p class="text-sm text-zinc-600 leading-relaxed">{q.reason}</p>
 									</div>
 								{/if}
 							</li>
