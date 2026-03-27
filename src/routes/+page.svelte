@@ -17,6 +17,8 @@
 	const SEEN_KEY = 'quizer_seen_ids';
 	const SESSION_KEY = 'quizer_session';
 	const WRONG_COUNTS_KEY = 'quizer_wrong_counts';
+	const BOOKMARKS_KEY = 'quizer_bookmarks';
+	const STRUCTURED_SHUFFLE_KEY = 'quizer_structured_shuffle';
 
 	type SavedSession = { questionIds: number[]; currentIndex: number; score: number };
 
@@ -70,6 +72,17 @@
 		saveWrongCounts(counts);
 	}
 
+	function loadBookmarks(): Set<number> {
+		if (!browser) return new Set();
+		try { return new Set(JSON.parse(localStorage.getItem(BOOKMARKS_KEY) ?? '[]') as number[]); }
+		catch { return new Set(); }
+	}
+
+	function saveBookmarks(ids: Set<number>) {
+		if (!browser) return;
+		localStorage.setItem(BOOKMARKS_KEY, JSON.stringify([...ids]));
+	}
+
 	// ── Core state ───────────────────────────────────────────────────────────────
 
 	type Phase = 'home' | 'quiz' | 'result' | 'bank' | 'stats';
@@ -102,6 +115,13 @@
 	let bankSearch = $state('');
 	let selectedIds = $state(new Set<number>());
 	let bankAddBase = $state<Question[]>([]); // non-empty = "add to session" mode
+	let bankShowBookmarked = $state(false);
+
+	// Bookmark state
+	let bookmarkedIds = $state<Set<number>>(new Set());
+
+	// Structured mode shuffle toggle
+	let structuredShuffle = $state(false);
 
 	// ── Timer (quick mode only) ───────────────────────────────────────────────
 
@@ -141,6 +161,8 @@
 	if (browser) {
 		seenCount = loadSeenIds().size;
 		savedSession = loadSavedSession();
+		bookmarkedIds = loadBookmarks();
+		structuredShuffle = localStorage.getItem(STRUCTURED_SHUFFLE_KEY) === 'true';
 	}
 
 	let total = $derived(shuffled.length);
@@ -149,13 +171,12 @@
 	let coveragePct = $derived(
 		data.questions.length > 0 ? (seenCount / data.questions.length) * 100 : 0
 	);
-	let bankFiltered = $derived(
-		bankSearch.trim() === ''
-			? data.questions
-			: data.questions.filter((q) =>
-					q.question.toLowerCase().includes(bankSearch.trim().toLowerCase())
-			  )
-	);
+	let bankFiltered = $derived((() => {
+		let qs = data.questions;
+		if (bankShowBookmarked) qs = qs.filter((q) => bookmarkedIds.has(q.id));
+		if (bankSearch.trim()) qs = qs.filter((q) => q.question.toLowerCase().includes(bankSearch.trim().toLowerCase()));
+		return qs;
+	})());
 	let selectedCount = $derived(selectedIds.size);
 	let wrongResults = $derived(sessionResults.filter((r) => !r.correct));
 	let resultsByQuestionId = $derived(new Map(sessionResults.map((r) => [r.question.id, r])));
@@ -225,7 +246,14 @@
 			saveSeenIds(seen);
 			seenCount = 0;
 		}
-		const picked = selectNextQuestions(data.questions, seen, data.questions.length);
+		let picked = selectNextQuestions(data.questions, seen, data.questions.length);
+		if (structuredShuffle) {
+			// Fisher-Yates shuffle in place
+			for (let i = picked.length - 1; i > 0; i--) {
+				const j = Math.floor(Math.random() * (i + 1));
+				[picked[i], picked[j]] = [picked[j], picked[i]];
+			}
+		}
 		beginQuiz(picked, 0, 0);
 		persistSession();
 	}
@@ -269,6 +297,25 @@
 		bankAddBase = addBase;
 		bankSearch = '';
 		phase = 'bank';
+	}
+
+	function toggleBookmark(id: number) {
+		const next = new Set(bookmarkedIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		bookmarkedIds = next;
+		saveBookmarks(next);
+	}
+
+	function startBookmarked() {
+		const qs = data.questions.filter((q) => bookmarkedIds.has(q.id));
+		if (qs.length === 0) return;
+		startCustom(qs);
+	}
+
+	function toggleStructuredShuffle() {
+		structuredShuffle = !structuredShuffle;
+		if (browser) localStorage.setItem(STRUCTURED_SHUFFLE_KEY, String(structuredShuffle));
 	}
 
 	function startTopWrong() {
@@ -352,6 +399,27 @@
 	function trunc(text: string, maxLen = 60): string {
 		return text.length > maxLen ? text.slice(0, maxLen) + '…' : text;
 	}
+
+	// ── Keyboard shortcuts ────────────────────────────────────────────────────
+
+	$effect(() => {
+		if (!browser) return;
+		function handleKey(e: KeyboardEvent) {
+			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+			if (phase !== 'quiz' || !active) return;
+			if (!hasAnswered) {
+				const n = parseInt(e.key);
+				if (n >= 1 && n <= active.slots.length) selectAnswer(n - 1);
+			} else if (revealed) {
+				if (e.key === ' ' || e.key === 'Enter') {
+					e.preventDefault();
+					nextQuestion();
+				}
+			}
+		}
+		window.addEventListener('keydown', handleKey);
+		return () => window.removeEventListener('keydown', handleKey);
+	});
 </script>
 
 <main class="min-h-screen bg-zinc-50 flex flex-col items-center px-4 py-10 {phase === 'quiz' ? 'justify-start' : 'justify-center'}">
@@ -397,9 +465,17 @@
 
 			<!-- Ôn tập toàn diện -->
 			<div class="bg-white rounded-2xl border border-zinc-100 shadow-sm p-5 flex flex-col gap-4">
-				<div>
-					<p class="font-medium text-zinc-900">Ôn Tập Toàn Diện</p>
-					<p class="text-sm text-zinc-400 mt-0.5">Toàn bộ câu hỏi theo thứ tự, ưu tiên câu chưa ôn</p>
+				<div class="flex items-start justify-between gap-3">
+					<div>
+						<p class="font-medium text-zinc-900">Ôn Tập Toàn Diện</p>
+						<p class="text-sm text-zinc-400 mt-0.5">Toàn bộ câu hỏi, ưu tiên câu chưa ôn</p>
+					</div>
+					<button
+						onclick={toggleStructuredShuffle}
+						class="shrink-0 text-xs px-2.5 py-1 rounded-lg border transition-colors {structuredShuffle ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-zinc-200 text-zinc-400 hover:border-zinc-400'}"
+					>
+						{structuredShuffle ? 'Ngẫu nhiên' : 'Theo thứ tự'}
+					</button>
 				</div>
 
 				<div class="flex flex-col gap-1.5">
@@ -453,6 +529,17 @@
 					<p class="text-sm text-zinc-400 mt-0.5">Toàn bộ {Math.min(seenCount, data.questions.length)} câu đã ôn · theo thứ tự ID</p>
 				</button>
 			{/if}
+
+			<!-- Câu đã đánh dấu -->
+			{#if bookmarkedIds.size > 0}
+				<button
+					onclick={startBookmarked}
+					class="w-full text-left bg-white rounded-2xl border border-zinc-100 shadow-sm p-5 hover:border-zinc-300 transition-colors"
+				>
+					<p class="font-medium text-zinc-900">Câu Đã Đánh Dấu</p>
+					<p class="text-sm text-zinc-400 mt-0.5">{bookmarkedIds.size} câu · luyện tập ngay</p>
+				</button>
+			{/if}
 		</div>
 
 	{:else if phase === 'bank'}
@@ -475,6 +562,14 @@
 					bind:value={bankSearch}
 					class="flex-1 px-4 py-2.5 rounded-xl border border-zinc-200 text-sm bg-white focus:outline-none focus:border-zinc-400 placeholder-zinc-400"
 				/>
+				{#if bookmarkedIds.size > 0}
+					<button
+						onclick={() => (bankShowBookmarked = !bankShowBookmarked)}
+						class="px-3 py-2.5 rounded-xl border text-sm transition-colors whitespace-nowrap {bankShowBookmarked ? 'border-amber-400 bg-amber-50 text-amber-600' : 'border-zinc-200 text-zinc-400 hover:border-zinc-400'}"
+					>
+						★ {bookmarkedIds.size}
+					</button>
+				{/if}
 				{#if selectedCount > 0}
 					<button
 						onclick={() => (selectedIds = new Set())}
@@ -485,7 +580,7 @@
 				{/if}
 			</div>
 
-			<p class="text-xs text-zinc-400">{bankFiltered.length} câu{bankSearch ? ' phù hợp' : ''}</p>
+			<p class="text-xs text-zinc-400">{bankFiltered.length} câu{bankShowBookmarked ? ' · đã đánh dấu' : ''}{bankSearch ? ' phù hợp' : ''}</p>
 
 			<div class="flex flex-col gap-2 pb-24">
 				{#each bankFiltered as q}
@@ -501,7 +596,8 @@
 						<span class="mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center text-xs font-bold transition-colors {selectedIds.has(q.id) ? 'bg-zinc-900 border-zinc-900 text-white' : 'border-zinc-300'}">
 							{#if selectedIds.has(q.id)}✓{/if}
 						</span>
-						<span class="text-sm text-zinc-700 leading-snug">{q.question}</span>
+						<span class="flex-1 text-sm text-zinc-700 leading-snug">{q.question}</span>
+					{#if bookmarkedIds.has(q.id)}<span class="shrink-0 text-amber-400 text-xs mt-0.5">★</span>{/if}
 					</button>
 				{/each}
 			</div>
@@ -547,9 +643,18 @@
 			</div>
 
 			<div class="bg-white rounded-2xl border border-zinc-100 shadow-sm p-6 flex flex-col gap-4">
-				<p class="text-zinc-900 text-xl font-semibold leading-snug">
-					{active.question.question}
-				</p>
+				<div class="flex items-start justify-between gap-3">
+					<p class="text-zinc-900 text-xl font-semibold leading-snug">
+						{active.question.question}
+					</p>
+					<button
+						onclick={() => toggleBookmark(active!.question.id)}
+						class="shrink-0 mt-0.5 text-lg leading-none transition-colors {bookmarkedIds.has(active.question.id) ? 'text-amber-400' : 'text-zinc-200 hover:text-zinc-400'}"
+						title="Đánh dấu câu hỏi"
+					>
+						★
+					</button>
+				</div>
 
 				<div class="flex flex-col gap-3">
 					{#each active.slots as slot, i}
