@@ -273,7 +273,7 @@
 	}
 </script>
 
-<main class="min-h-screen bg-zinc-50 flex flex-col items-center justify-center px-4 py-10">
+<main class="min-h-screen bg-zinc-50 flex flex-col items-center px-4 py-10 {phase === 'quiz' ? 'justify-start' : 'justify-center'}">
 	{#if data.questions.length === 0}
 		<!-- ── Trống ────────────────────────────────────────────────────────────── -->
 		<div class="bg-white rounded-2xl border border-zinc-100 shadow-sm p-8 w-full max-w-lg text-center">
@@ -427,7 +427,7 @@
 
 	{:else if phase === 'quiz' && active}
 		<!-- ── Câu hỏi ────────────────────────────────────────────────────────── -->
-		<div class="w-full max-w-lg flex flex-col gap-6">
+		<div class="w-full max-w-lg flex flex-col gap-6 {revealed ? 'pb-56' : ''}" >
 			<div class="flex flex-col gap-2">
 				<div class="flex justify-between text-sm text-zinc-400">
 					<button onclick={goHome} class="hover:text-zinc-600 transition-colors">← Trang chủ</button>
@@ -461,22 +461,26 @@
 					{/each}
 				</div>
 
-				{#if revealed}
-					<div transition:fade={{ duration: 200 }}>
-						<div class="p-4 bg-zinc-50 rounded-xl">
-							<p class="text-xs font-semibold uppercase tracking-wide text-zinc-400 mb-1">Giải thích</p>
-							<p class="text-zinc-600 text-sm leading-relaxed">{active.question.reason}</p>
-						</div>
-						<button
-							class="mt-3 w-full py-3 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-700 transition-colors"
-							onclick={nextQuestion}
-						>
-							{isLastQuestion ? 'Xem kết quả' : 'Câu tiếp theo →'}
-						</button>
-					</div>
-				{/if}
+				</div>
+		</div>
+
+	<!-- Floating explanation + next button -->
+	{#if revealed}
+		<div transition:fade={{ duration: 150 }} class="fixed bottom-0 left-0 right-0 bg-white border-t border-zinc-100 shadow-lg">
+			<div class="max-w-lg mx-auto p-4 flex flex-col gap-3">
+				<div class="p-4 bg-zinc-50 rounded-xl">
+					<p class="text-xs font-semibold uppercase tracking-wide text-zinc-400 mb-1">Giải thích</p>
+					<p class="text-zinc-600 text-sm leading-relaxed">{active.question.reason}</p>
+				</div>
+				<button
+					class="w-full py-3 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-700 transition-colors"
+					onclick={nextQuestion}
+				>
+					{isLastQuestion ? 'Xem kết quả' : 'Câu tiếp theo →'}
+				</button>
 			</div>
 		</div>
+	{/if}
 
 	{:else if phase === 'result'}
 		<!-- ── Kết quả ────────────────────────────────────────────────────────── -->
