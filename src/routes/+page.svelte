@@ -16,6 +16,7 @@
 
 	const SEEN_KEY = 'quizer_seen_ids';
 	const SESSION_KEY = 'quizer_session';
+	const WRONG_COUNTS_KEY = 'quizer_wrong_counts';
 
 	type SavedSession = { questionIds: number[]; currentIndex: number; score: number };
 
@@ -50,9 +51,28 @@
 		if (browser) localStorage.removeItem(SESSION_KEY);
 	}
 
+	function loadWrongCounts(): Map<number, number> {
+		if (!browser) return new Map();
+		try {
+			const obj = JSON.parse(localStorage.getItem(WRONG_COUNTS_KEY) ?? '{}') as Record<string, number>;
+			return new Map(Object.entries(obj).map(([k, v]) => [Number(k), v]));
+		} catch { return new Map(); }
+	}
+
+	function saveWrongCounts(counts: Map<number, number>) {
+		if (!browser) return;
+		localStorage.setItem(WRONG_COUNTS_KEY, JSON.stringify(Object.fromEntries(counts)));
+	}
+
+	function recordWrong(questionId: number) {
+		const counts = loadWrongCounts();
+		counts.set(questionId, (counts.get(questionId) ?? 0) + 1);
+		saveWrongCounts(counts);
+	}
+
 	// ── Core state ───────────────────────────────────────────────────────────────
 
-	type Phase = 'home' | 'quiz' | 'result' | 'bank';
+	type Phase = 'home' | 'quiz' | 'result' | 'bank' | 'stats';
 	type Mode = 'quick' | 'structured' | 'review' | 'custom';
 
 	type QuizResult = {
@@ -81,6 +101,7 @@
 	// Bank state
 	let bankSearch = $state('');
 	let selectedIds = $state(new Set<number>());
+	let bankAddBase = $state<Question[]>([]); // non-empty = "add to session" mode
 
 	// ── Timer (quick mode only) ───────────────────────────────────────────────
 
@@ -232,13 +253,32 @@
 	function startFromBank() {
 		const selected = data.questions.filter((q) => selectedIds.has(q.id));
 		if (selected.length === 0) return;
-		startCustom(selected);
+		if (bankAddBase.length > 0) {
+			// Merge with existing session, deduplicate by id
+			const existingIds = new Set(bankAddBase.map((q) => q.id));
+			const added = selected.filter((q) => !existingIds.has(q.id));
+			startCustom([...bankAddBase, ...added]);
+		} else {
+			startCustom(selected);
+		}
+		bankAddBase = [];
 	}
 
-	function goToBank(preselect: Set<number> = new Set()) {
+	function goToBank(preselect: Set<number> = new Set(), addBase: Question[] = []) {
 		selectedIds = preselect;
+		bankAddBase = addBase;
 		bankSearch = '';
 		phase = 'bank';
+	}
+
+	function startTopWrong() {
+		const counts = loadWrongCounts();
+		const top = data.questions
+			.filter((q) => counts.has(q.id))
+			.sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0))
+			.slice(0, 50);
+		if (top.length === 0) return;
+		startCustom(top);
 	}
 
 	// ── Quiz actions ─────────────────────────────────────────────────────────────
@@ -260,6 +300,7 @@
 
 		const correct = selectedSlotIndex === active.correctSlotIndex;
 		if (correct) score += 1;
+		else recordWrong(active.question.id);
 
 		const chosenOriginal =
 			selectedSlotIndex !== null ? active.slots[selectedSlotIndex].originalIndex : null;
@@ -329,12 +370,20 @@
 					<h1 class="text-2xl font-semibold text-zinc-900">Luyện Tập</h1>
 					<p class="text-sm text-zinc-400 mt-1">{data.questions.length} câu hỏi</p>
 				</div>
-				<button
-					onclick={() => goToBank()}
-					class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors px-3 py-1.5 rounded-lg border border-zinc-200 hover:border-zinc-400"
-				>
-					Ngân hàng câu hỏi
-				</button>
+				<div class="flex gap-2">
+					<button
+						onclick={() => (phase = 'stats')}
+						class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors px-3 py-1.5 rounded-lg border border-zinc-200 hover:border-zinc-400"
+					>
+						Thống kê
+					</button>
+					<button
+						onclick={() => goToBank()}
+						class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors px-3 py-1.5 rounded-lg border border-zinc-200 hover:border-zinc-400"
+					>
+						Ngân hàng
+					</button>
+				</div>
 			</div>
 
 			<!-- Luyện tập nhanh -->
@@ -411,7 +460,12 @@
 		<div class="w-full max-w-lg flex flex-col gap-4">
 			<div class="flex items-center gap-3">
 				<button onclick={goHome} class="text-sm text-zinc-400 hover:text-zinc-700 transition-colors">← Trang chủ</button>
-				<h2 class="text-lg font-semibold text-zinc-900">Ngân hàng câu hỏi</h2>
+				<div>
+					<h2 class="text-lg font-semibold text-zinc-900">Ngân hàng câu hỏi</h2>
+					{#if bankAddBase.length > 0}
+						<p class="text-xs text-zinc-400">Chọn câu thêm vào phiên ({bankAddBase.length} câu hiện tại)</p>
+					{/if}
+				</div>
 			</div>
 
 			<div class="flex gap-2">
@@ -461,7 +515,7 @@
 					onclick={startFromBank}
 					class="px-5 py-2.5 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-700 transition-colors"
 				>
-					Luyện tập →
+					{bankAddBase.length > 0 ? `Thêm ${selectedCount} câu →` : 'Luyện tập →'}
 				</button>
 			</div>
 		{/if}
@@ -574,6 +628,12 @@
 					>
 						Luyện tập lại {shuffled.length} câu →
 					</button>
+					<button
+						class="w-full py-3 rounded-xl border border-zinc-200 text-zinc-600 text-sm font-medium hover:border-zinc-400 hover:text-zinc-900 transition-colors"
+						onclick={() => goToBank(new Set(), [...shuffled])}
+					>
+						Thêm câu hỏi vào phiên
+					</button>
 					{#if wrongResults.length > 0}
 						<button
 							class="w-full py-3 rounded-xl border border-zinc-200 text-zinc-600 text-sm font-medium hover:border-zinc-400 hover:text-zinc-900 transition-colors"
@@ -645,6 +705,61 @@
 							</li>
 						{/each}
 					</ul>
+				</div>
+			{/if}
+		</div>
+
+	{:else if phase === 'stats'}
+		<!-- ── Thống kê ──────────────────────────────────────────────────────────── -->
+		{@const counts = loadWrongCounts()}
+		{@const topWrong = data.questions
+			.filter((q) => counts.has(q.id))
+			.sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0))}
+		<div class="w-full max-w-lg flex flex-col gap-4">
+			<div class="flex items-center gap-3">
+				<button onclick={goHome} class="text-sm text-zinc-400 hover:text-zinc-700 transition-colors">← Trang chủ</button>
+				<h2 class="text-lg font-semibold text-zinc-900">Thống kê</h2>
+			</div>
+
+			<div class="bg-white rounded-2xl border border-zinc-100 shadow-sm p-5 flex justify-between">
+				<div class="text-center">
+					<p class="text-2xl font-bold text-zinc-900">{topWrong.length}</p>
+					<p class="text-xs text-zinc-400 mt-0.5">câu đã sai</p>
+				</div>
+				<div class="text-center">
+					<p class="text-2xl font-bold text-zinc-900">{[...counts.values()].reduce((a, b) => a + b, 0)}</p>
+					<p class="text-xs text-zinc-400 mt-0.5">lần sai tổng</p>
+				</div>
+				<div class="text-center">
+					<p class="text-2xl font-bold text-zinc-900">{Math.min(topWrong.length, 50)}</p>
+					<p class="text-xs text-zinc-400 mt-0.5">câu trong bộ đề</p>
+				</div>
+			</div>
+
+			{#if topWrong.length > 0}
+				<button
+					onclick={startTopWrong}
+					class="w-full py-3 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-700 transition-colors"
+				>
+					Luyện tập {Math.min(topWrong.length, 50)} câu sai nhiều nhất →
+				</button>
+
+				<div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden">
+					<p class="px-5 py-4 text-sm font-semibold text-zinc-500 uppercase tracking-wide border-b border-zinc-100">
+						Câu sai nhiều nhất
+					</p>
+					<ul class="divide-y divide-zinc-100">
+						{#each topWrong.slice(0, 50) as q, i}
+							<li class="px-5 py-3 flex items-start gap-3">
+								<span class="shrink-0 text-xs font-bold text-red-400 mt-0.5 w-5 text-right">{counts.get(q.id)}×</span>
+								<span class="text-sm text-zinc-700 leading-snug">{trunc(q.question, 80)}</span>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{:else}
+				<div class="bg-white rounded-2xl border border-zinc-100 shadow-sm p-8 text-center">
+					<p class="text-zinc-400 text-sm">Chưa có dữ liệu. Hãy luyện tập để xem thống kê câu sai.</p>
 				</div>
 			{/if}
 		</div>
