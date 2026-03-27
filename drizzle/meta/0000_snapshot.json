@@ -1,0 +1,80 @@
+{
+  "id": "c05aa08b-4f50-4996-8c9e-3c98f61d17e9",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.questions": {
+      "name": "questions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "question": {
+          "name": "question",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ans1": {
+          "name": "ans1",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ans2": {
+          "name": "ans2",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ans3": {
+          "name": "ans3",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ans4": {
+          "name": "ans4",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "correct_ans_index": {
+          "name": "correct_ans_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
